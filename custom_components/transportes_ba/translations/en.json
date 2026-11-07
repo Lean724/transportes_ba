@@ -3,8 +3,14 @@
     "step": {
       "user": {
         "title": "Buenos Aires Public Transit - Networks & Lines",
-        "description": "Select the lines you want to monitor across the network and set the radius from home to detect nearby stations.",
+        "description": "Select the transit lines you want to monitor across the network and set the radius from home to detect nearby stations.",
         "data": {
+          "habilitar_subte": "Enable Subte & Premetro (Emova)",
+          "lineas_subte_seleccionadas": "Subte lines to monitor",
+          "habilitar_trenes": "Enable Metropolitan Trains (SOFSE)",
+          "lineas_trenes_seleccionadas": "Train lines to monitor",
+          "habilitar_estaciones_cercanas": "Monitor nearby stations & next train departures",
+          "radio_hogar_km": "Search radius from home (km)",
           "enable_subte": "Enable Subte & Premetro (Emova)",
           "selected_subte_lines": "Subte lines to monitor",
           "enable_trenes": "Enable Metropolitan Trains (SOFSE)",
@@ -17,6 +23,7 @@
         "title": "Nearby Stations & API Parameters",
         "description": "Stations within your configured radius have been pre-selected. You can manually add or remove stations and optionally provide your GCBA Transit API credentials.",
         "data": {
+          "estaciones_seleccionadas": "Stations to monitor (next departures / status)",
           "selected_stations": "Stations to monitor (next departures / status)",
           "gcba_client_id": "GCBA API Client ID (optional, for Subte GTFS arrivals)",
           "gcba_client_secret": "GCBA API Client Secret (optional)"
@@ -33,6 +40,12 @@
         "title": "Options - Networks, Lines & Radius",
         "description": "Update the networks, lines, and nearby station detection radius.",
         "data": {
+          "habilitar_subte": "Enable Subte & Premetro (Emova)",
+          "lineas_subte_seleccionadas": "Subte lines to monitor",
+          "habilitar_trenes": "Enable Metropolitan Trains (SOFSE)",
+          "lineas_trenes_seleccionadas": "Train lines to monitor",
+          "habilitar_estaciones_cercanas": "Monitor nearby stations & next train departures",
+          "radio_hogar_km": "Search radius from home (km)",
           "enable_subte": "Enable Subte & Premetro (Emova)",
           "selected_subte_lines": "Subte lines to monitor",
           "enable_trenes": "Enable Metropolitan Trains (SOFSE)",
@@ -45,6 +58,7 @@
         "title": "Options - Stations & API Parameters",
         "description": "Adjust the monitored stations (sorted by distance from home) and optional GCBA Transit API credentials.",
         "data": {
+          "estaciones_seleccionadas": "Stations to monitor (next departures / status)",
           "selected_stations": "Stations to monitor (next departures / status)",
           "gcba_client_id": "GCBA API Client ID (optional, for Subte GTFS arrivals)",
           "gcba_client_secret": "GCBA API Client Secret (optional)"

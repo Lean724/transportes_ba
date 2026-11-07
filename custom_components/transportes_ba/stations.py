@@ -410,16 +410,17 @@ def get_stations_for_lines(
 
         item = dict(st)
         if home_lat is not None and home_lon is not None:
-            item["distance_km"] = haversine_km(
-                home_lat, home_lon, st["lat"], st["lon"]
-            )
+            dist = haversine_km(home_lat, home_lon, st["lat"], st["lon"])
+            item["distancia_km"] = dist
+            item["distance_km"] = dist
         else:
+            item["distancia_km"] = None
             item["distance_km"] = None
         results.append(item)
 
     results.sort(
         key=lambda x: (
-            x["distance_km"] if x["distance_km"] is not None else 9999.0,
+            x["distancia_km"] if x["distancia_km"] is not None else 9999.0,
             x["network"],
             x["line"],
             x["name"],
@@ -448,5 +449,6 @@ def get_nearby_station_keys(
     return [
         st["key"]
         for st in stations
-        if st["distance_km"] is not None and st["distance_km"] <= radius_km
+        if (st.get("distancia_km") or st.get("distance_km")) is not None
+        and (st.get("distancia_km") or st.get("distance_km")) <= radius_km
     ]

@@ -3,20 +3,30 @@ from datetime import timedelta
 
 DOMAIN = "transportes_ba"
 
-# Config options - Paso 1: Redes y Líneas
-CONF_ENABLE_SUBTE = "enable_subte"
-CONF_ENABLE_TRENES = "enable_trenes"
-CONF_SELECTED_SUBTE_LINES = "selected_subte_lines"
-CONF_SELECTED_TRENES_LINES = "selected_trenes_lines"
+# Opciones de configuración en español - Paso 1: Redes, Líneas y Radio
+CONF_HABILITAR_SUBTE = "habilitar_subte"
+CONF_HABILITAR_TRENES = "habilitar_trenes"
+CONF_LINEAS_SUBTE_SELECCIONADAS = "lineas_subte_seleccionadas"
+CONF_LINEAS_TRENES_SELECCIONADAS = "lineas_trenes_seleccionadas"
+CONF_HABILITAR_ESTACIONES_CERCANAS = "habilitar_estaciones_cercanas"
+CONF_RADIO_HOGAR_KM = "radio_hogar_km"
 
-# Config options - Paso 2: Estaciones Cercanas y API Opcional
-CONF_ENABLE_NEARBY_STATIONS = "enable_nearby_stations"
-CONF_HOME_RADIUS_KM = "home_radius_km"
-CONF_SELECTED_STATIONS = "selected_stations"
+# Opciones de configuración en español - Paso 2: Estaciones y API GCBA
+CONF_ESTACIONES_SELECCIONADAS = "estaciones_seleccionadas"
 CONF_GCBA_CLIENT_ID = "gcba_client_id"
 CONF_GCBA_CLIENT_SECRET = "gcba_client_secret"
 
-DEFAULT_HOME_RADIUS_KM = 2.0
+# Compatibilidad con claves anteriores
+CONF_ENABLE_SUBTE = CONF_HABILITAR_SUBTE
+CONF_ENABLE_TRENES = CONF_HABILITAR_TRENES
+CONF_SELECTED_SUBTE_LINES = CONF_LINEAS_SUBTE_SELECCIONADAS
+CONF_SELECTED_TRENES_LINES = CONF_LINEAS_TRENES_SELECCIONADAS
+CONF_ENABLE_NEARBY_STATIONS = CONF_HABILITAR_ESTACIONES_CERCANAS
+CONF_HOME_RADIUS_KM = CONF_RADIO_HOGAR_KM
+CONF_SELECTED_STATIONS = CONF_ESTACIONES_SELECCIONADAS
+
+DEFAULT_RADIO_HOGAR_KM = 2.0
+DEFAULT_HOME_RADIUS_KM = DEFAULT_RADIO_HOGAR_KM
 
 # Intervalos de sondeo
 SCAN_INTERVAL_SUBTE = timedelta(minutes=3)

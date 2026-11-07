@@ -23,6 +23,25 @@ classifier = _load_module("classifier")
 stations = _load_module("stations")
 
 
+def test_spanish_constants_and_backwards_compatibility():
+    assert const.CONF_HABILITAR_SUBTE == "habilitar_subte"
+    assert const.CONF_HABILITAR_TRENES == "habilitar_trenes"
+    assert const.CONF_LINEAS_SUBTE_SELECCIONADAS == "lineas_subte_seleccionadas"
+    assert const.CONF_LINEAS_TRENES_SELECCIONADAS == "lineas_trenes_seleccionadas"
+    assert const.CONF_HABILITAR_ESTACIONES_CERCANAS == "habilitar_estaciones_cercanas"
+    assert const.CONF_RADIO_HOGAR_KM == "radio_hogar_km"
+    assert const.CONF_ESTACIONES_SELECCIONADAS == "estaciones_seleccionadas"
+
+    # Verificación de alias legados para no romper instalaciones previas
+    assert const.CONF_ENABLE_SUBTE == const.CONF_HABILITAR_SUBTE
+    assert const.CONF_ENABLE_TRENES == const.CONF_HABILITAR_TRENES
+    assert const.CONF_SELECTED_SUBTE_LINES == const.CONF_LINEAS_SUBTE_SELECCIONADAS
+    assert const.CONF_SELECTED_TRENES_LINES == const.CONF_LINEAS_TRENES_SELECCIONADAS
+    assert const.CONF_ENABLE_NEARBY_STATIONS == const.CONF_HABILITAR_ESTACIONES_CERCANAS
+    assert const.CONF_HOME_RADIUS_KM == const.CONF_RADIO_HOGAR_KM
+    assert const.CONF_SELECTED_STATIONS == const.CONF_ESTACIONES_SELECCIONADAS
+
+
 def test_classify_normal_status():
     res = classifier.classify_service_status("Normal")
     assert res["estado"] == "Normal"

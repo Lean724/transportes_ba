@@ -9,13 +9,20 @@ from .const import (
     CONF_ENABLE_NEARBY_STATIONS,
     CONF_ENABLE_SUBTE,
     CONF_ENABLE_TRENES,
+    CONF_ESTACIONES_SELECCIONADAS,
     CONF_GCBA_CLIENT_ID,
     CONF_GCBA_CLIENT_SECRET,
+    CONF_HABILITAR_ESTACIONES_CERCANAS,
+    CONF_HABILITAR_SUBTE,
+    CONF_HABILITAR_TRENES,
     CONF_HOME_RADIUS_KM,
+    CONF_LINEAS_SUBTE_SELECCIONADAS,
+    CONF_LINEAS_TRENES_SELECCIONADAS,
+    CONF_RADIO_HOGAR_KM,
     CONF_SELECTED_STATIONS,
     CONF_SELECTED_SUBTE_LINES,
     CONF_SELECTED_TRENES_LINES,
-    DEFAULT_HOME_RADIUS_KM,
+    DEFAULT_RADIO_HOGAR_KM,
     DOMAIN,
     KEY_COORDINATOR_STATIONS,
     KEY_COORDINATOR_SUBTE,
@@ -31,36 +38,50 @@ from .stations import get_nearby_station_keys
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
+LEGACY_KEY_MAP = {
+    CONF_HABILITAR_SUBTE: "enable_subte",
+    CONF_HABILITAR_TRENES: "enable_trenes",
+    CONF_LINEAS_SUBTE_SELECCIONADAS: "selected_subte_lines",
+    CONF_LINEAS_TRENES_SELECCIONADAS: "selected_trenes_lines",
+    CONF_HABILITAR_ESTACIONES_CERCANAS: "enable_nearby_stations",
+    CONF_RADIO_HOGAR_KM: "home_radius_km",
+    CONF_ESTACIONES_SELECCIONADAS: "selected_stations",
+}
+
 
 def get_config_value(entry: ConfigEntry, key: str, default=None):
-    """Obtiene un valor desde options con fallback a data."""
-    if key in entry.options:
-        return entry.options[key]
-    return entry.data.get(key, default)
+    """Obtiene un valor desde options con fallback a data, soportando claves en español y legadas."""
+    legacy_key = LEGACY_KEY_MAP.get(key)
+    for store in (entry.options, entry.data):
+        if key in store:
+            return store[key]
+        if legacy_key and legacy_key in store:
+            return store[legacy_key]
+    return default
 
 
 def resolve_monitored_stations(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:
     """Resuelve las estaciones monitoreadas (seleccionadas + detectadas por radio si no se fijaron)."""
-    if not get_config_value(entry, CONF_ENABLE_NEARBY_STATIONS, False):
+    if not get_config_value(entry, CONF_HABILITAR_ESTACIONES_CERCANAS, False):
         return []
 
-    explicit = get_config_value(entry, CONF_SELECTED_STATIONS, None)
+    explicit = get_config_value(entry, CONF_ESTACIONES_SELECCIONADAS, None)
     if explicit is not None:
         return list(explicit)
 
     home_lat = getattr(hass.config, "latitude", None)
     home_lon = getattr(hass.config, "longitude", None)
     radius_km = float(
-        get_config_value(entry, CONF_HOME_RADIUS_KM, DEFAULT_HOME_RADIUS_KM)
+        get_config_value(entry, CONF_RADIO_HOGAR_KM, DEFAULT_RADIO_HOGAR_KM)
     )
     subte_lines = (
-        get_config_value(entry, CONF_SELECTED_SUBTE_LINES, SUBTE_LINES)
-        if get_config_value(entry, CONF_ENABLE_SUBTE, True)
+        get_config_value(entry, CONF_LINEAS_SUBTE_SELECCIONADAS, SUBTE_LINES)
+        if get_config_value(entry, CONF_HABILITAR_SUBTE, True)
         else []
     )
     trenes_lines = (
-        get_config_value(entry, CONF_SELECTED_TRENES_LINES, [])
-        if get_config_value(entry, CONF_ENABLE_TRENES, True)
+        get_config_value(entry, CONF_LINEAS_TRENES_SELECCIONADAS, [])
+        if get_config_value(entry, CONF_HABILITAR_TRENES, True)
         else []
     )
     return get_nearby_station_keys(
@@ -81,13 +102,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     trenes_coord: TrenesDataUpdateCoordinator | None = None
 
     # Instanciar e inicializar Subte si está habilitado
-    if get_config_value(entry, CONF_ENABLE_SUBTE, True):
+    if get_config_value(entry, CONF_HABILITAR_SUBTE, True):
         subte_coord = SubteDataUpdateCoordinator(hass)
         await subte_coord.async_config_entry_first_refresh()
         entry_data[KEY_COORDINATOR_SUBTE] = subte_coord
 
     # Instanciar e inicializar Trenes si está habilitado
-    if get_config_value(entry, CONF_ENABLE_TRENES, True):
+    if get_config_value(entry, CONF_HABILITAR_TRENES, True):
         trenes_coord = TrenesDataUpdateCoordinator(hass)
         await trenes_coord.async_config_entry_first_refresh()
         entry_data[KEY_COORDINATOR_TRENES] = trenes_coord

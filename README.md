@@ -1,15 +1,21 @@
-# 🚇🚆 Transportes de Buenos Aires (`transportes_ba`)
+# <img src="custom_components/transportes_ba/brand/icon.png" width="36" height="36" align="center" alt="TBA logo"> Transportes de Buenos Aires (`transportes_ba`)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/Lean724/transportes_ba)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/Lean724/transportes_ba)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Integración personalizada (`custom_component`) para **Home Assistant** que monitorea en tiempo real el estado detallado de la red de **Subte y Premetro (Emova)**, **Trenes Metropolitanos del AMBA (Trenes Argentinos / SOFSE)** y las **próximas salidas desde las estaciones cercanas a tu casa**.
+Integración personalizada (`custom_component`) para **Home Assistant** que monitorea en tiempo real el estado detallado de la red de **Subte y Premetro (Emova)**, **Trenes Metropolitanos del AMBA (Trenes Argentinos / SOFSE)** y las **próximas salidas desde las estaciones cercanas a tu casa**, completamente en español argentino.
+
+<p align="center">
+  <img src="custom_components/transportes_ba/brand/logo.png" width="160" height="160" alt="TBA Logo">
+</p>
 
 ---
 
 ## ✨ Características Principales
 
+- **Configuración y Estados 100% en Español**:
+  - Parámetros de configuración, entidades, atributos y estados descriptivos adaptados para usuarios de Argentina y Home Assistant en español.
 - **Arquitectura en 2 Capas (Estado de Red + Estaciones Cercanas)**:
   1. **Monitoreo de Líneas**: Elegí todas las líneas de Tren y Subte que forman parte de tu viaje diario sin importar qué tan lejos estén de tu casa.
   2. **Detección Automática de Estaciones por Radio (`km`)**: A partir de la ubicación de tu casa en Home Assistant (`zone.home`) y un radio configurable (por defecto `2.0 km`), pre-selecciona automáticamente las estaciones cercanas de tus líneas habilitadas (y te permite sumar o quitar estaciones manualmente, como la estación de vuelta del trabajo).

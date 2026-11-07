@@ -13,13 +13,20 @@ from .const import (
     CONF_ENABLE_NEARBY_STATIONS,
     CONF_ENABLE_SUBTE,
     CONF_ENABLE_TRENES,
+    CONF_ESTACIONES_SELECCIONADAS,
     CONF_GCBA_CLIENT_ID,
     CONF_GCBA_CLIENT_SECRET,
+    CONF_HABILITAR_ESTACIONES_CERCANAS,
+    CONF_HABILITAR_SUBTE,
+    CONF_HABILITAR_TRENES,
     CONF_HOME_RADIUS_KM,
+    CONF_LINEAS_SUBTE_SELECCIONADAS,
+    CONF_LINEAS_TRENES_SELECCIONADAS,
+    CONF_RADIO_HOGAR_KM,
     CONF_SELECTED_STATIONS,
     CONF_SELECTED_SUBTE_LINES,
     CONF_SELECTED_TRENES_LINES,
-    DEFAULT_HOME_RADIUS_KM,
+    DEFAULT_RADIO_HOGAR_KM,
     DOMAIN,
     SUBTE_LINES,
     TRENES_LINES,
@@ -28,22 +35,32 @@ from .stations import get_nearby_station_keys, get_stations_for_lines
 
 DEFAULT_TRENES_SELECTION = ["Sarmiento", "Mitre", "Roca"]
 
+LEGACY_KEY_MAP = {
+    CONF_HABILITAR_SUBTE: "enable_subte",
+    CONF_HABILITAR_TRENES: "enable_trenes",
+    CONF_LINEAS_SUBTE_SELECCIONADAS: "selected_subte_lines",
+    CONF_LINEAS_TRENES_SELECCIONADAS: "selected_trenes_lines",
+    CONF_HABILITAR_ESTACIONES_CERCANAS: "enable_nearby_stations",
+    CONF_RADIO_HOGAR_KM: "home_radius_km",
+    CONF_ESTACIONES_SELECCIONADAS: "selected_stations",
+}
+
 
 def _build_step1_schema(
-    enable_subte: bool = True,
-    selected_subte: list[str] | None = None,
-    enable_trenes: bool = True,
-    selected_trenes: list[str] | None = None,
-    enable_nearby: bool = True,
-    radius_km: float = DEFAULT_HOME_RADIUS_KM,
+    habilitar_subte: bool = True,
+    lineas_subte: list[str] | None = None,
+    habilitar_trenes: bool = True,
+    lineas_trenes: list[str] | None = None,
+    habilitar_cercanas: bool = True,
+    radio_km: float = DEFAULT_RADIO_HOGAR_KM,
 ) -> vol.Schema:
     """Construye el esquema del Paso 1 (Redes, Líneas y Radio del Hogar)."""
     return vol.Schema(
         {
-            vol.Required(CONF_ENABLE_SUBTE, default=enable_subte): bool,
+            vol.Required(CONF_HABILITAR_SUBTE, default=habilitar_subte): bool,
             vol.Optional(
-                CONF_SELECTED_SUBTE_LINES,
-                default=SUBTE_LINES if selected_subte is None else selected_subte,
+                CONF_LINEAS_SUBTE_SELECCIONADAS,
+                default=SUBTE_LINES if lineas_subte is None else lineas_subte,
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=SUBTE_LINES,
@@ -51,13 +68,13 @@ def _build_step1_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Required(CONF_ENABLE_TRENES, default=enable_trenes): bool,
+            vol.Required(CONF_HABILITAR_TRENES, default=habilitar_trenes): bool,
             vol.Optional(
-                CONF_SELECTED_TRENES_LINES,
+                CONF_LINEAS_TRENES_SELECCIONADAS,
                 default=(
                     DEFAULT_TRENES_SELECTION
-                    if selected_trenes is None
-                    else selected_trenes
+                    if lineas_trenes is None
+                    else lineas_trenes
                 ),
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
@@ -66,9 +83,11 @@ def _build_step1_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Optional(CONF_ENABLE_NEARBY_STATIONS, default=enable_nearby): bool,
             vol.Optional(
-                CONF_HOME_RADIUS_KM, default=radius_km
+                CONF_HABILITAR_ESTACIONES_CERCANAS, default=habilitar_cercanas
+            ): bool,
+            vol.Optional(
+                CONF_RADIO_HOGAR_KM, default=radio_km
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0.2,
@@ -92,16 +111,34 @@ def _build_step2_stations_schema(
     """Construye el esquema del Paso 2 (Estaciones detectadas por radio + API opcional)."""
     home_lat = getattr(hass.config, "latitude", None)
     home_lon = getattr(hass.config, "longitude", None)
-    radius_km = float(step1_data.get(CONF_HOME_RADIUS_KM, DEFAULT_HOME_RADIUS_KM))
+    radius_km = float(
+        step1_data.get(
+            CONF_RADIO_HOGAR_KM,
+            step1_data.get(CONF_HOME_RADIUS_KM, DEFAULT_RADIO_HOGAR_KM),
+        )
+    )
 
+    enable_subte = step1_data.get(
+        CONF_HABILITAR_SUBTE, step1_data.get(CONF_ENABLE_SUBTE, True)
+    )
     subte_lines = (
-        step1_data.get(CONF_SELECTED_SUBTE_LINES, [])
-        if step1_data.get(CONF_ENABLE_SUBTE, True)
+        step1_data.get(
+            CONF_LINEAS_SUBTE_SELECCIONADAS,
+            step1_data.get(CONF_SELECTED_SUBTE_LINES, []),
+        )
+        if enable_subte
         else []
     )
+
+    enable_trenes = step1_data.get(
+        CONF_HABILITAR_TRENES, step1_data.get(CONF_ENABLE_TRENES, True)
+    )
     trenes_lines = (
-        step1_data.get(CONF_SELECTED_TRENES_LINES, [])
-        if step1_data.get(CONF_ENABLE_TRENES, True)
+        step1_data.get(
+            CONF_LINEAS_TRENES_SELECCIONADAS,
+            step1_data.get(CONF_SELECTED_TRENES_LINES, []),
+        )
+        if enable_trenes
         else []
     )
 
@@ -117,11 +154,8 @@ def _build_step2_stations_schema(
     for st in available_stations:
         valid_keys.add(st["key"])
         prefix = "Tren" if st["network"] == "tren" else "Subte"
-        dist_str = (
-            f" ({st['distance_km']:.1f} km)"
-            if st["distance_km"] is not None
-            else ""
-        )
+        dist_km = st.get("distancia_km", st.get("distance_km"))
+        dist_str = f" ({dist_km:.1f} km)" if dist_km is not None else ""
         label = f"{prefix} {st['line']} - {st['name']}{dist_str}"
         options.append(selector.SelectOptionDict(value=st["key"], label=label))
 
@@ -134,8 +168,6 @@ def _build_step2_stations_schema(
     )
 
     if existing_stations is not None:
-        # Conserva las estaciones ya elegidas que sigan perteneciendo a las líneas activas,
-        # y suma las detectadas en el radio si antes estaba vacío.
         filtered = [k for k in existing_stations if k in valid_keys]
         default_stations = filtered if filtered else nearby_keys
     else:
@@ -144,7 +176,7 @@ def _build_step2_stations_schema(
     return vol.Schema(
         {
             vol.Optional(
-                CONF_SELECTED_STATIONS,
+                CONF_ESTACIONES_SELECCIONADAS,
                 default=default_stations,
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
@@ -180,13 +212,16 @@ class TransportesBAConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Paso 1: Selección de medios, líneas y radio de proximidad."""
+        """Paso 1: Selección de redes, líneas y radio de proximidad."""
         if user_input is not None:
             await self.async_set_unique_id("transportes_ba_amba")
             self._abort_if_unique_id_configured()
 
             self._step1_data = dict(user_input)
-            if self._step1_data.get(CONF_ENABLE_NEARBY_STATIONS, False):
+            if self._step1_data.get(
+                CONF_HABILITAR_ESTACIONES_CERCANAS,
+                self._step1_data.get(CONF_ENABLE_NEARBY_STATIONS, False),
+            ):
                 return await self.async_step_stations()
 
             return self.async_create_entry(
@@ -234,9 +269,13 @@ class TransportesBAOptionsFlowHandler(config_entries.OptionsFlow):
         self._step1_data: dict[str, Any] = {}
 
     def _current(self, key: str, default: Any) -> Any:
-        if key in self._config_entry.options:
-            return self._config_entry.options[key]
-        return self._config_entry.data.get(key, default)
+        legacy_key = LEGACY_KEY_MAP.get(key)
+        for store in (self._config_entry.options, self._config_entry.data):
+            if key in store:
+                return store[key]
+            if legacy_key and legacy_key in store:
+                return store[legacy_key]
+        return default
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -244,22 +283,27 @@ class TransportesBAOptionsFlowHandler(config_entries.OptionsFlow):
         """Paso 1 de opciones: Redes, líneas y radio."""
         if user_input is not None:
             self._step1_data = dict(user_input)
-            if self._step1_data.get(CONF_ENABLE_NEARBY_STATIONS, False):
+            if self._step1_data.get(
+                CONF_HABILITAR_ESTACIONES_CERCANAS,
+                self._step1_data.get(CONF_ENABLE_NEARBY_STATIONS, False),
+            ):
                 return await self.async_step_stations()
 
-            self._step1_data[CONF_SELECTED_STATIONS] = []
+            self._step1_data[CONF_ESTACIONES_SELECCIONADAS] = []
             return self.async_create_entry(title="", data=self._step1_data)
 
         schema = _build_step1_schema(
-            enable_subte=self._current(CONF_ENABLE_SUBTE, True),
-            selected_subte=self._current(CONF_SELECTED_SUBTE_LINES, SUBTE_LINES),
-            enable_trenes=self._current(CONF_ENABLE_TRENES, True),
-            selected_trenes=self._current(
-                CONF_SELECTED_TRENES_LINES, DEFAULT_TRENES_SELECTION
+            habilitar_subte=self._current(CONF_HABILITAR_SUBTE, True),
+            lineas_subte=self._current(CONF_LINEAS_SUBTE_SELECCIONADAS, SUBTE_LINES),
+            habilitar_trenes=self._current(CONF_HABILITAR_TRENES, True),
+            lineas_trenes=self._current(
+                CONF_LINEAS_TRENES_SELECCIONADAS, DEFAULT_TRENES_SELECTION
             ),
-            enable_nearby=self._current(CONF_ENABLE_NEARBY_STATIONS, True),
-            radius_km=float(
-                self._current(CONF_HOME_RADIUS_KM, DEFAULT_HOME_RADIUS_KM)
+            habilitar_cercanas=self._current(
+                CONF_HABILITAR_ESTACIONES_CERCANAS, True
+            ),
+            radio_km=float(
+                self._current(CONF_RADIO_HOGAR_KM, DEFAULT_RADIO_HOGAR_KM)
             ),
         )
         return self.async_show_form(step_id="init", data_schema=schema)
@@ -275,7 +319,7 @@ class TransportesBAOptionsFlowHandler(config_entries.OptionsFlow):
         schema = _build_step2_stations_schema(
             hass=self.hass,
             step1_data=self._step1_data,
-            existing_stations=self._current(CONF_SELECTED_STATIONS, None),
+            existing_stations=self._current(CONF_ESTACIONES_SELECCIONADAS, None),
             gcba_client_id=self._current(CONF_GCBA_CLIENT_ID, ""),
             gcba_client_secret=self._current(CONF_GCBA_CLIENT_SECRET, ""),
         )
