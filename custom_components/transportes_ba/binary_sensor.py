@@ -1,4 +1,4 @@
-"""Plataforma de binary_sensor para alertas directas."""
+"""Plataforma de binary_sensor para alertas operativas directas."""
 from __future__ import annotations
 
 from typing import Any
@@ -13,12 +13,14 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .classifier import classify_service_status
 from .const import (
     CONF_SELECTED_SUBTE_LINES,
     CONF_SELECTED_TRENES_LINES,
     DOMAIN,
     KEY_COORDINATOR_SUBTE,
     KEY_COORDINATOR_TRENES,
+    STATUS_CATEGORY_UNKNOWN,
 )
 
 
@@ -27,6 +29,17 @@ def _get_selected_lines(entry: ConfigEntry, key: str) -> list[str]:
     if key in entry.options:
         return entry.options[key]
     return entry.data.get(key, [])
+
+
+def _is_operational_alert(line_data: dict[str, Any]) -> bool:
+    """Evalúa si los datos de la línea representan un problema operativo activo."""
+    if "alerta_operativa" in line_data:
+        return bool(line_data["alerta_operativa"])
+    classified = classify_service_status(
+        line_data.get("estado", ""),
+        line_data.get("mensaje", ""),
+    )
+    return bool(classified["alerta_operativa"])
 
 
 async def async_setup_entry(
@@ -52,7 +65,7 @@ async def async_setup_entry(
 
 
 class SubteAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Representa si existe una incidencia activa en la línea."""
+    """Representa si existe una incidencia operativa activa en la línea de Subte."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -77,8 +90,8 @@ class SubteAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
-        estado = data.get(self.line_code, {}).get("estado", "").lower()
-        return estado not in ("normal", "a tiempo", "")
+        line_data = data.get(self.line_code, {})
+        return _is_operational_alert(line_data)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -86,12 +99,13 @@ class SubteAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
         line_data = data.get(self.line_code, {})
         return {
             "estado": line_data.get("estado", "Desconocido"),
+            "categoria": line_data.get("categoria", STATUS_CATEGORY_UNKNOWN),
             "mensaje": line_data.get("mensaje", ""),
         }
 
 
 class TrenAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Representa si existe una incidencia activa en el tren."""
+    """Representa si existe una incidencia operativa activa en la línea de Tren."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -113,8 +127,8 @@ class TrenAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
-        estado = data.get(self.line_name, {}).get("estado", "").lower()
-        return estado not in ("normal", "a tiempo", "")
+        line_data = data.get(self.line_name, {})
+        return _is_operational_alert(line_data)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -122,5 +136,6 @@ class TrenAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
         line_data = data.get(self.line_name, {})
         return {
             "estado": line_data.get("estado", "Desconocido"),
+            "categoria": line_data.get("categoria", STATUS_CATEGORY_UNKNOWN),
             "mensaje": line_data.get("mensaje", ""),
         }

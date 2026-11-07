@@ -2,13 +2,24 @@
   "config": {
     "step": {
       "user": {
-        "title": "Transportes de Buenos Aires",
-        "description": "Selecciona los medios de transporte y las líneas del AMBA que deseas monitorear.",
+        "title": "Transportes de Buenos Aires - Redes y Líneas",
+        "description": "Selecciona las líneas que deseas monitorear en toda la red y define el radio desde tu casa para detectar estaciones cercanas.",
         "data": {
           "enable_subte": "Habilitar Subte y Premetro (Emova)",
           "selected_subte_lines": "Líneas de Subte a monitorear",
           "enable_trenes": "Habilitar Trenes Metropolitanos (SOFSE)",
-          "selected_trenes_lines": "Líneas de Tren a monitorear"
+          "selected_trenes_lines": "Líneas de Tren a monitorear",
+          "enable_nearby_stations": "Monitorear estaciones cercanas y próximos trenes",
+          "home_radius_km": "Radio de búsqueda desde casa (km)"
+        }
+      },
+      "stations": {
+        "title": "Estaciones Cercanas y Parámetros de API",
+        "description": "Se pre-seleccionaron las estaciones dentro de tu radio configurado. Puedes sumar o quitar estaciones manualmente y, opcionalmente, agregar tus credenciales de la API de Transporte del GCBA.",
+        "data": {
+          "selected_stations": "Estaciones a monitorear (próximas salidas / estado)",
+          "gcba_client_id": "API GCBA Client ID (opcional, para arribos Subte GTFS)",
+          "gcba_client_secret": "API GCBA Client Secret (opcional)"
         }
       }
     },
@@ -19,13 +30,24 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opciones de Transportes de Buenos Aires",
-        "description": "Modifica las redes y líneas que deseas monitorear.",
+        "title": "Opciones - Redes, Líneas y Radio",
+        "description": "Modifica las redes, líneas y el radio de detección de estaciones cercanas.",
         "data": {
           "enable_subte": "Habilitar Subte y Premetro (Emova)",
           "selected_subte_lines": "Líneas de Subte a monitorear",
           "enable_trenes": "Habilitar Trenes Metropolitanos (SOFSE)",
-          "selected_trenes_lines": "Líneas de Tren a monitorear"
+          "selected_trenes_lines": "Líneas de Tren a monitorear",
+          "enable_nearby_stations": "Monitorear estaciones cercanas y próximos trenes",
+          "home_radius_km": "Radio de búsqueda desde casa (km)"
+        }
+      },
+      "stations": {
+        "title": "Opciones - Estaciones y Parámetros de API",
+        "description": "Ajusta las estaciones monitoreadas (ordenadas por distancia a tu casa) y las credenciales opcionales de la API de Transporte del GCBA.",
+        "data": {
+          "selected_stations": "Estaciones a monitorear (próximas salidas / estado)",
+          "gcba_client_id": "API GCBA Client ID (opcional, para arribos Subte GTFS)",
+          "gcba_client_secret": "API GCBA Client Secret (opcional)"
         }
       }
     }

@@ -8,6 +8,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run unit tests
+        run: pytest -v
+
   hassfest:
     name: Hassfest Validation
     runs-on: ubuntu-latest

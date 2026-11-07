@@ -1,6 +1,7 @@
 """Coordinadores de actualización para Transportes de Buenos Aires."""
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import datetime, timezone
 import json
@@ -15,17 +16,29 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .classifier import (
+    classify_service_status,
+    is_station_affected_by_message,
+    normalize_text,
+    truncate_state,
+)
 from .const import (
     DOMAIN,
+    SCAN_INTERVAL_STATIONS,
     SCAN_INTERVAL_SUBTE,
     SCAN_INTERVAL_TRENES,
     SOFSE_GERENCIA_MAP,
+    STATUS_CATEGORY_INTERRUPTED,
+    STATUS_CATEGORY_NORMAL,
     TRENES_LINES,
+    URL_GCBA_SUBTE_FORECAST,
     URL_SOFSE_API_BASE,
+    URL_SOFSE_ARRIBOS,
     URL_SUBTE_SIGNALR,
     URL_SUBTE_STATUS,
     URL_TRENES_STATUS,
 )
+from .stations import get_station_by_key, haversine_km
 
 _LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT = ClientTimeout(total=15)
@@ -48,23 +61,6 @@ _SOFSE_CIPHER_STEP_1 = (
     ("u", "#0"),
     ("=", "#v"),
 )
-
-
-def _classify_subte_status(raw_status: str) -> tuple[str, str]:
-    """Separa el estado operativo corto y el mensaje detallado de Subte."""
-    text = (raw_status or "").strip()
-    if not text:
-        return "Desconocido", ""
-    lower = text.lower()
-    if lower in ("normal", "servicio normal", "a tiempo"):
-        return "Normal", ""
-    if any(k in lower for k in ("interrumpid", "suspendid", "sin servicio", "cancelad")):
-        return "Interrumpido", text
-    if any(k in lower for k in ("limitad", "recorrido reducido", "servicio corto")):
-        return "Servicio limitado", text
-    if "demora" in lower:
-        return "Demoras", text
-    return "Con modificaciones", text
 
 
 def _format_frequency(raw_freq: Any) -> str | int | None:
@@ -208,10 +204,12 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
                 line_id = "Premetro" if raw_name in ("P", "PREMETRO") else raw_name
                 if raw_name == "U":
                     line_id = "Urquiza"
-                estado, mensaje = _classify_subte_status(item.get("LineStatus", ""))
+                classified = classify_service_status(item.get("LineStatus", ""))
                 normalized[line_id] = {
-                    "estado": estado,
-                    "mensaje": mensaje,
+                    "estado": classified["estado"],
+                    "categoria": classified["categoria"],
+                    "alerta_operativa": classified["alerta_operativa"],
+                    "mensaje": classified["mensaje"],
                     "frecuencia": _format_frequency(item.get("LineFrequency")),
                     "actualizado": f"{data.get('date', '')} {data.get('time', '')}".strip(),
                 }
@@ -220,9 +218,15 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
         for item in data.get("lineas", []):
             raw_name = str(item.get("nombre", "")).strip()
             line_id = "Premetro" if raw_name.upper() in ("P", "PREMETRO") else raw_name.upper()
+            classified = classify_service_status(
+                item.get("estado", "Desconocido"),
+                item.get("mensaje", ""),
+            )
             normalized[line_id] = {
-                "estado": item.get("estado", "Desconocido"),
-                "mensaje": item.get("mensaje", ""),
+                "estado": classified["estado"],
+                "categoria": classified["categoria"],
+                "alerta_operativa": classified["alerta_operativa"],
+                "mensaje": classified["mensaje"],
                 "frecuencia": item.get("frecuencia", None),
             }
         return normalized
@@ -317,11 +321,15 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
         normalized: dict[str, dict[str, Any]] = {
             line_name: {
                 "estado": "Normal",
+                "categoria": STATUS_CATEGORY_NORMAL,
+                "alerta_operativa": False,
                 "mensaje": "",
                 "ramales": [],
             }
             for line_name in TRENES_LINES
         }
+
+        raw_status_by_line: dict[str, str] = {}
 
         if isinstance(gerencias, list):
             for ger in gerencias:
@@ -341,15 +349,20 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
                     if isinstance(estado_obj, dict)
                     else str(estado_obj)
                 )
+                raw_status_by_line[line_name] = estado_msg
 
                 normalized.setdefault(
                     line_name,
-                    {"estado": "Normal", "mensaje": "", "ramales": []},
+                    {
+                        "estado": "Normal",
+                        "categoria": STATUS_CATEGORY_NORMAL,
+                        "alerta_operativa": False,
+                        "mensaje": "",
+                        "ramales": [],
+                    },
                 )
                 if alertas_ger:
                     normalized[line_name]["mensaje"] = " | ".join(alertas_ger)
-                if estado_msg and estado_msg.lower() not in ("alertas por ramal", "normal"):
-                    normalized[line_name]["estado"] = estado_msg
 
         if isinstance(ramales, list):
             for ramal in ramales:
@@ -368,7 +381,7 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
                 ]
                 ramal_estado = "Normal" if operativo else "Sin servicio"
                 if alertas_ramal and operativo:
-                    ramal_estado = "Con alerta"
+                    ramal_estado = truncate_state(" | ".join(alertas_ramal), 120)
 
                 ramal_info = {
                     "nombre": ramal.get("nombre", ""),
@@ -379,7 +392,13 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
                 }
                 normalized.setdefault(
                     line_name,
-                    {"estado": "Normal", "mensaje": "", "ramales": []},
+                    {
+                        "estado": "Normal",
+                        "categoria": STATUS_CATEGORY_NORMAL,
+                        "alerta_operativa": False,
+                        "mensaje": "",
+                        "ramales": [],
+                    },
                 )
                 normalized[line_name]["ramales"].append(ramal_info)
 
@@ -388,21 +407,23 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
                         f"{ramal_info['nombre']}: {ramal_info['alerta']}"
                     )
 
-        # Determinar el estado general de cada línea a partir de alertas/ramales
+        # Clasificar el estado general y mostrar el motivo directo en "estado"
         for line_name, info in normalized.items():
             ramales_list = info["ramales"]
             if ramales_list and all(not r["operativo"] for r in ramales_list):
-                info["estado"] = "Interrumpido"
-            elif any(r["alerta"] for r in ramales_list) or info["mensaje"]:
-                msg_lower = info["mensaje"].lower()
-                if any(k in msg_lower for k in ("interrumpid", "suspendid", "cancelad")):
-                    info["estado"] = "Interrumpido"
-                elif any(k in msg_lower for k in ("limitad", "reducid", "corto")):
-                    info["estado"] = "Servicio limitado"
-                elif "demora" in msg_lower:
-                    info["estado"] = "Demoras"
-                elif info["estado"] == "Normal":
-                    info["estado"] = "Alerta activa"
+                info["estado"] = (
+                    truncate_state(f"Sin servicio: {info['mensaje']}")
+                    if info["mensaje"]
+                    else "Interrumpido"
+                )
+                info["categoria"] = STATUS_CATEGORY_INTERRUPTED
+                info["alerta_operativa"] = True
+            else:
+                raw_st = raw_status_by_line.get(line_name, "Normal")
+                classified = classify_service_status(raw_st, info["mensaje"])
+                info["estado"] = classified["estado"]
+                info["categoria"] = classified["categoria"]
+                info["alerta_operativa"] = classified["alerta_operativa"]
 
         return normalized
 
@@ -417,11 +438,338 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
                 normalized: dict[str, dict[str, Any]] = {}
                 for linea in data.get("lineas", []):
                     nombre = linea.get("nombre", "").strip()
+                    classified = classify_service_status(
+                        linea.get("estado", "Desconocido"),
+                        linea.get("mensaje", ""),
+                    )
                     normalized[nombre] = {
-                        "estado": linea.get("estado", "Desconocido"),
-                        "mensaje": linea.get("mensaje", ""),
+                        "estado": classified["estado"],
+                        "categoria": classified["categoria"],
+                        "alerta_operativa": classified["alerta_operativa"],
+                        "mensaje": classified["mensaje"],
                         "ramales": linea.get("ramales", []),
                     }
                 return normalized
         except (ClientError, TimeoutError) as err:
             raise UpdateFailed(f"Fallo de conexión al consultar Trenes: {err}") from err
+
+
+class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
+    """Coordinador para próximos arribos y estado de estaciones cercanas/seleccionadas."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        station_keys: list[str],
+        subte_coord: SubteDataUpdateCoordinator | None = None,
+        trenes_coord: TrenesDataUpdateCoordinator | None = None,
+        gcba_client_id: str | None = None,
+        gcba_client_secret: str | None = None,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_stations",
+            update_interval=SCAN_INTERVAL_STATIONS,
+        )
+        self.session = async_get_clientsession(hass)
+        self.station_keys = station_keys
+        self.subte_coord = subte_coord
+        self.trenes_coord = trenes_coord
+        self.gcba_client_id = (gcba_client_id or "").strip()
+        self.gcba_client_secret = (gcba_client_secret or "").strip()
+
+    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
+        results: dict[str, dict[str, Any]] = {}
+        if not self.station_keys:
+            return results
+
+        home_lat = getattr(self.hass.config, "latitude", None)
+        home_lon = getattr(self.hass.config, "longitude", None)
+
+        tren_stations: list[dict[str, Any]] = []
+        subte_stations: list[dict[str, Any]] = []
+
+        for key in self.station_keys:
+            st = get_station_by_key(key)
+            if not st:
+                continue
+            if st["network"] == "tren":
+                tren_stations.append(st)
+            elif st["network"] == "subte":
+                subte_stations.append(st)
+
+        # 1. Consultar arribos de estaciones de Tren en paralelo
+        if tren_stations:
+            tasks = [
+                self._fetch_tren_station(st, home_lat, home_lon)
+                for st in tren_stations
+            ]
+            tren_outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+            for st, outcome in zip(tren_stations, tren_outcomes):
+                if isinstance(outcome, dict):
+                    results[st["key"]] = outcome
+                else:
+                    _LOGGER.debug(
+                        "Error al consultar arribos de estación %s: %s",
+                        st["name"],
+                        outcome,
+                    )
+                    results[st["key"]] = {
+                        "estado": "Sin datos de arribos",
+                        "arribos": [],
+                        "estacion_cerrada": False,
+                        "distancia_km": (
+                            haversine_km(home_lat, home_lon, st["lat"], st["lon"])
+                            if home_lat is not None and home_lon is not None
+                            else None
+                        ),
+                    }
+
+        # 2. Consultar estaciones de Subte (con API GCBA opcional o cruce con Emova)
+        gcba_forecast: dict[str, Any] | None = None
+        if subte_stations and self.gcba_client_id and self.gcba_client_secret:
+            gcba_forecast = await self._fetch_gcba_subte_forecast()
+
+        for st in subte_stations:
+            results[st["key"]] = self._build_subte_station_status(
+                st, home_lat, home_lon, gcba_forecast
+            )
+
+        return results
+
+    async def _fetch_tren_station(
+        self,
+        station: dict[str, Any],
+        home_lat: float | None,
+        home_lon: float | None,
+    ) -> dict[str, Any]:
+        """Consulta /v1/arribos/estacion/{id} en SOFSE y resume próximos trenes."""
+        dist_km = (
+            haversine_km(home_lat, home_lon, station["lat"], station["lon"])
+            if home_lat is not None and home_lon is not None
+            else None
+        )
+
+        line_data = (
+            (self.trenes_coord.data or {}).get(station["line"], {})
+            if self.trenes_coord
+            else {}
+        )
+        line_msg = line_data.get("mensaje", "")
+        closed = is_station_affected_by_message(station["name"], line_msg)
+
+        url = f"{URL_SOFSE_ARRIBOS}/{station['id']}"
+        async with self.session.get(url, timeout=REQUEST_TIMEOUT) as resp:
+            if resp.status != 200:
+                raise UpdateFailed(
+                    f"HTTP {resp.status} en arribos de estación {station['id']}"
+                )
+            data = await resp.json(content_type=None)
+
+        upcoming: list[dict[str, Any]] = []
+        for item in data.get("results") or []:
+            arribo = item.get("arribo") or {}
+            servicio = item.get("servicio") or {}
+            if servicio.get("cancelacion"):
+                continue
+
+            segundos = arribo.get("segundos")
+            if segundos is None:
+                continue
+            try:
+                sec_int = int(segundos)
+            except (ValueError, TypeError):
+                continue
+
+            if sec_int < -30:
+                continue
+
+            mins = max(0, round(sec_int / 60))
+            hasta_est = ((servicio.get("hasta") or {}).get("estacion") or {}).get(
+                "nombre"
+            )
+            cab_final = ((servicio.get("ramal") or {}).get("cabeceraFinal") or {}).get(
+                "nombre"
+            )
+            destino = (hasta_est or cab_final or "Destino").strip()
+            ramal_nombre = ((servicio.get("ramal") or {}).get("nombre") or "").strip()
+            anden = ((arribo.get("anden") or {}).get("nombre") or "").strip()
+            estado_form = (
+                ((servicio.get("desde") or {}).get("estado") or {}).get("nombre")
+                or "En circulación"
+            )
+            llegada = arribo.get("llegada") or {}
+            salida = arribo.get("salida") or {}
+            hora_iso = (
+                llegada.get("estimada")
+                or salida.get("estimada")
+                or llegada.get("programada")
+                or salida.get("programada")
+            )
+
+            upcoming.append(
+                {
+                    "destino": destino,
+                    "ramal": ramal_nombre,
+                    "minutos": mins,
+                    "segundos": sec_int,
+                    "anden": anden or None,
+                    "estado_formacion": estado_form,
+                    "hora_estimada": hora_iso,
+                }
+            )
+
+        upcoming.sort(key=lambda x: x["segundos"])
+
+        # Agrupar los próximos tiempos por destino para mostrar un resumen claro
+        by_dest: dict[str, list[str]] = {}
+        for arr in upcoming:
+            dest = arr["destino"]
+            by_dest.setdefault(dest, [])
+            if len(by_dest[dest]) < 2:
+                label = "En andén" if arr["minutos"] == 0 else f"{arr['minutos']} min"
+                by_dest[dest].append(label)
+
+        if closed:
+            summary_state = truncate_state(f"Estación cerrada / obras: {line_msg}")
+        elif by_dest:
+            parts = [
+                f"{dest}: {', '.join(times)}" for dest, times in by_dest.items()
+            ]
+            summary_state = truncate_state(" | ".join(parts))
+        else:
+            summary_state = "Sin próximos arribos"
+
+        return {
+            "estado": summary_state,
+            "arribos": upcoming[:8],
+            "estacion_cerrada": closed,
+            "distancia_km": dist_km,
+            "alerta_linea": line_msg,
+        }
+
+    async def _fetch_gcba_subte_forecast(self) -> dict[str, Any] | None:
+        """Consulta opcionalmente el endpoint GTFS-RT de Subtes de GCBA."""
+        params = {
+            "client_id": self.gcba_client_id,
+            "client_secret": self.gcba_client_secret,
+        }
+        try:
+            async with self.session.get(
+                URL_GCBA_SUBTE_FORECAST,
+                params=params,
+                timeout=REQUEST_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug(
+                        "API GCBA Subte devolvió HTTP %s", resp.status
+                    )
+                    return None
+                return await resp.json(content_type=None)
+        except (ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("No se pudo consultar API GCBA Subte: %s", err)
+            return None
+
+    def _build_subte_station_status(
+        self,
+        station: dict[str, Any],
+        home_lat: float | None,
+        home_lon: float | None,
+        gcba_forecast: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Construye el estado de una estación de Subte (cruce con Emova + GCBA opcional)."""
+        dist_km = (
+            haversine_km(home_lat, home_lon, station["lat"], station["lon"])
+            if home_lat is not None and home_lon is not None
+            else None
+        )
+        line_data = (
+            (self.subte_coord.data or {}).get(station["line"], {})
+            if self.subte_coord
+            else {}
+        )
+        line_state = line_data.get("estado", "Normal")
+        line_msg = line_data.get("mensaje", "")
+        freq = line_data.get("frecuencia")
+        closed = is_station_affected_by_message(station["name"], line_msg)
+
+        arribos_gcba: list[dict[str, Any]] = []
+        if gcba_forecast and isinstance(gcba_forecast, dict):
+            arribos_gcba = self._extract_gcba_arrivals_for_station(
+                station, gcba_forecast
+            )
+
+        if closed:
+            state_str = truncate_state(f"Cerrada: {line_msg}")
+        elif arribos_gcba:
+            parts = [f"{a['destino']}: {a['minutos']} min" for a in arribos_gcba[:2]]
+            state_str = truncate_state(" | ".join(parts))
+        elif line_data.get("alerta_operativa"):
+            state_str = truncate_state(line_state)
+        elif freq:
+            state_str = f"Operativa (cada {freq})"
+        else:
+            state_str = "Operativa"
+
+        return {
+            "estado": state_str,
+            "arribos": arribos_gcba,
+            "estacion_cerrada": closed,
+            "frecuencia_linea": freq,
+            "alerta_linea": line_msg,
+            "distancia_km": dist_km,
+        }
+
+    def _extract_gcba_arrivals_for_station(
+        self, station: dict[str, Any], forecast: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Extrae los próximos subtes de la respuesta forecastGTFS de GCBA para una estación."""
+        arrivals: list[dict[str, Any]] = []
+        norm_st_name = normalize_text(station["name"])
+        target_line = f"Linea{station['line']}".lower()
+        now = time.time()
+
+        entities = forecast.get("Entity") or forecast.get("entity") or []
+        for ent in entities:
+            linea_obj = ent.get("Linea") or ent.get("linea") or {}
+            route_id = str(
+                linea_obj.get("Route_Id") or linea_obj.get("route_id") or ""
+            ).lower()
+            if target_line not in route_id:
+                continue
+
+            dest_name = str(
+                linea_obj.get("Direction_Name")
+                or linea_obj.get("direction_name")
+                or f"Sentido {linea_obj.get('Direction_Id', '')}"
+            ).strip()
+            estaciones = linea_obj.get("Estaciones") or linea_obj.get("estaciones") or []
+            for est in estaciones:
+                stop_name = normalize_text(
+                    str(est.get("stop_name") or est.get("Stop_Name") or "")
+                )
+                if not stop_name or (
+                    stop_name not in norm_st_name and norm_st_name not in stop_name
+                ):
+                    continue
+                arr_obj = est.get("arrival") or est.get("Arrival") or {}
+                arr_time = arr_obj.get("time")
+                delay = arr_obj.get("delay", 0)
+                if arr_time:
+                    try:
+                        secs = int(float(arr_time) - now)
+                        if secs >= -20:
+                            arrivals.append(
+                                {
+                                    "destino": dest_name,
+                                    "minutos": max(0, round(secs / 60)),
+                                    "segundos": secs,
+                                    "demora_s": delay,
+                                }
+                            )
+                    except (ValueError, TypeError):
+                        continue
+
+        arrivals.sort(key=lambda x: x["segundos"])
+        return arrivals
