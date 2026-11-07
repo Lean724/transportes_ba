@@ -1,0 +1,11 @@
+{
+  "domain": "transportes_ba",
+  "name": "Transportes de Buenos Aires",
+  "codeowners": ["@Lean724"],
+  "config_flow": true,
+  "documentation": "https://github.com/Lean724/transportes_ba",
+  "issue_tracker": "https://github.com/Lean724/transportes_ba/issues",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "1.0.0"
+}

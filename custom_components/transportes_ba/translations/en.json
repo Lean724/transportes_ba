@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Buenos Aires Public Transit",
+        "description": "Select the transit networks and AMBA lines you want to monitor.",
+        "data": {
+          "enable_subte": "Enable Subte & Premetro (Emova)",
+          "selected_subte_lines": "Subte lines to monitor",
+          "enable_trenes": "Enable Metropolitan Trains (SOFSE)",
+          "selected_trenes_lines": "Train lines to monitor"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Buenos Aires Public Transit Options",
+        "description": "Update the networks and lines you want to monitor.",
+        "data": {
+          "enable_subte": "Enable Subte & Premetro (Emova)",
+          "selected_subte_lines": "Subte lines to monitor",
+          "enable_trenes": "Enable Metropolitan Trains (SOFSE)",
+          "selected_trenes_lines": "Train lines to monitor"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Transportes de Buenos Aires",
+        "description": "Selecciona los medios de transporte y las líneas del AMBA que deseas monitorear.",
+        "data": {
+          "enable_subte": "Habilitar Subte y Premetro (Emova)",
+          "selected_subte_lines": "Líneas de Subte a monitorear",
+          "enable_trenes": "Habilitar Trenes Metropolitanos (SOFSE)",
+          "selected_trenes_lines": "Líneas de Tren a monitorear"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "La integración ya se encuentra configurada."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Transportes de Buenos Aires",
+        "description": "Modifica las redes y líneas que deseas monitorear.",
+        "data": {
+          "enable_subte": "Habilitar Subte y Premetro (Emova)",
+          "selected_subte_lines": "Líneas de Subte a monitorear",
+          "enable_trenes": "Habilitar Trenes Metropolitanos (SOFSE)",
+          "selected_trenes_lines": "Líneas de Tren a monitorear"
+        }
+      }
+    }
+  }
+}
