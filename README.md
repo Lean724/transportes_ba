@@ -1,7 +1,7 @@
 # <img src="custom_components/transportes_ba/brand/icon.png" width="36" height="36" align="center" alt="TBA logo"> Transportes de Buenos Aires (`transportes_ba`)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/Lean724/transportes_ba)
+[![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/Lean724/transportes_ba)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Integración personalizada (`custom_component`) para **Home Assistant** que monitorea en tiempo real el estado detallado de la red de **Subte y Premetro (Emova)**, **Trenes Metropolitanos del AMBA (Trenes Argentinos / SOFSE)** y las **próximas salidas desde las estaciones cercanas a tu casa**, completamente en español argentino.

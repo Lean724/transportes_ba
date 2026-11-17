@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import time
 from typing import Any
 from urllib.parse import quote
 
-from aiohttp import ClientError, ClientTimeout
+from aiohttp import ClientError, ClientResponseError, ClientTimeout
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -44,6 +44,32 @@ _LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT = ClientTimeout(total=15)
 
 SIGNALR_CONNECTION_DATA = '[{"name":"mobileemova"}]'
+
+# Encabezados HTTP estándar para evitar bloqueos de User-Agent genéricos
+HEADERS_SUBTE = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://emova.com.ar/",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+}
+
+HEADERS_SOFSE = {
+    "User-Agent": "okhttp/4.9.2",
+    "Accept": "application/json",
+    "Referer": "https://api-servicios.sofse.gob.ar/",
+    "Accept-Language": "es-AR,es;q=0.9",
+}
+
+HEADERS_GCBA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
 
 _SOFSE_CIPHER_STEP_0 = (
     ("a", "#t"),
@@ -108,16 +134,53 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
             update_interval=SCAN_INTERVAL_SUBTE,
         )
         self.session = async_get_clientsession(hass)
+        self._base_interval: timedelta = SCAN_INTERVAL_SUBTE
+        self._max_interval: timedelta = timedelta(minutes=15)
+        self._consecutive_errors: int = 0
+
+    def _apply_backoff(self, is_rate_limit: bool = False) -> None:
+        """Incrementa progresivamente el intervalo de sondeo ante errores o 429."""
+        self._consecutive_errors += 1
+        if is_rate_limit or self._consecutive_errors >= 2:
+            multiplier = min(2 ** (self._consecutive_errors - 1), 5)
+            new_interval = min(self._base_interval * multiplier, self._max_interval)
+            if self.update_interval != new_interval:
+                self.update_interval = new_interval
+                _LOGGER.warning(
+                    "%s: Servidor con alta carga o límite de tasa (%s fallos consecutivos). "
+                    "Próximo sondeo en %s",
+                    self.name,
+                    self._consecutive_errors,
+                    new_interval,
+                )
+
+    def _reset_backoff(self) -> None:
+        """Restaura el intervalo habitual tras una consulta exitosa."""
+        if self._consecutive_errors > 0 or self.update_interval != self._base_interval:
+            self._consecutive_errors = 0
+            self.update_interval = self._base_interval
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         try:
-            return await self._fetch_from_signalr()
+            data = await self._fetch_from_signalr()
+            self._reset_backoff()
+            return data
         except (ClientError, TimeoutError, UpdateFailed, ValueError, KeyError) as signalr_err:
             _LOGGER.debug(
                 "SignalR Emova no disponible (%s), intentando endpoint JSON directo",
                 signalr_err,
             )
-            return await self._fetch_from_json_endpoint()
+            try:
+                data = await self._fetch_from_json_endpoint()
+                self._reset_backoff()
+                return data
+            except UpdateFailed as err:
+                is_429 = "429" in str(err)
+                self._apply_backoff(is_rate_limit=is_429)
+                raise
+            except (ClientError, TimeoutError) as net_err:
+                self._apply_backoff(is_rate_limit=False)
+                raise UpdateFailed(f"Fallo de conexión al consultar Subte: {net_err}") from net_err
 
     async def _fetch_from_signalr(self) -> dict[str, dict[str, Any]]:
         """Obtiene el estado en tiempo real desde el hub SignalR de Emova."""
@@ -127,9 +190,12 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
         }
         async with self.session.get(
             f"{URL_SUBTE_SIGNALR}/negotiate",
+            headers=HEADERS_SUBTE,
             params=params_base,
             timeout=REQUEST_TIMEOUT,
         ) as resp:
+            if resp.status == 429:
+                raise UpdateFailed("Error HTTP 429 (Too Many Requests) en negotiate de Subte")
             if resp.status != 200:
                 raise UpdateFailed(f"Error HTTP {resp.status} en negotiate de Subte")
             neg_data = await resp.json(content_type=None)
@@ -145,9 +211,12 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
         }
         async with self.session.get(
             f"{URL_SUBTE_SIGNALR}/connect",
+            headers=HEADERS_SUBTE,
             params=lp_params,
             timeout=REQUEST_TIMEOUT,
         ) as resp:
+            if resp.status == 429:
+                raise UpdateFailed("Error HTTP 429 (Too Many Requests) en connect de Subte")
             if resp.status != 200:
                 raise UpdateFailed(f"Error HTTP {resp.status} en connect de Subte")
             conn_data = await resp.json(content_type=None)
@@ -157,18 +226,24 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
             msg_id = conn_data.get("C", "")
             async with self.session.get(
                 f"{URL_SUBTE_SIGNALR}/start",
+                headers=HEADERS_SUBTE,
                 params=lp_params,
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
+                if resp.status == 429:
+                    raise UpdateFailed("Error HTTP 429 (Too Many Requests) en start de Subte")
                 if resp.status != 200:
                     raise UpdateFailed(f"Error HTTP {resp.status} en start de Subte")
 
             poll_params = {**lp_params, "messageId": msg_id}
             async with self.session.get(
                 f"{URL_SUBTE_SIGNALR}/poll",
+                headers=HEADERS_SUBTE,
                 params=poll_params,
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
+                if resp.status == 429:
+                    raise UpdateFailed("Error HTTP 429 (Too Many Requests) en poll de Subte")
                 if resp.status != 200:
                     raise UpdateFailed(f"Error HTTP {resp.status} en poll de Subte")
                 poll_data = await resp.json(content_type=None)
@@ -185,14 +260,17 @@ class SubteDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
 
     async def _fetch_from_json_endpoint(self) -> dict[str, dict[str, Any]]:
         """Obtiene y normaliza datos desde el endpoint JSON estándar."""
-        try:
-            async with self.session.get(URL_SUBTE_STATUS, timeout=REQUEST_TIMEOUT) as resp:
-                if resp.status != 200:
-                    raise UpdateFailed(f"Error HTTP {resp.status} al consultar Subte")
-                data = await resp.json(content_type=None)
-                return self._normalize_emova_payload(data)
-        except (ClientError, TimeoutError) as err:
-            raise UpdateFailed(f"Fallo de conexión al consultar Subte: {err}") from err
+        async with self.session.get(
+            URL_SUBTE_STATUS,
+            headers=HEADERS_SUBTE,
+            timeout=REQUEST_TIMEOUT,
+        ) as resp:
+            if resp.status == 429:
+                raise UpdateFailed("Error HTTP 429 (Too Many Requests) al consultar Subte")
+            if resp.status != 200:
+                raise UpdateFailed(f"Error HTTP {resp.status} al consultar Subte")
+            data = await resp.json(content_type=None)
+            return self._normalize_emova_payload(data)
 
     def _normalize_emova_payload(self, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Normaliza tanto el formato SignalR ('lines') como el JSON ('lineas')."""
@@ -245,16 +323,53 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
         self.session = async_get_clientsession(hass)
         self._token: str | None = None
         self._token_exp: float = 0.0
+        self._base_interval: timedelta = SCAN_INTERVAL_TRENES
+        self._max_interval: timedelta = timedelta(minutes=20)
+        self._consecutive_errors: int = 0
+
+    def _apply_backoff(self, is_rate_limit: bool = False) -> None:
+        """Incrementa progresivamente el intervalo de sondeo ante errores o 429."""
+        self._consecutive_errors += 1
+        if is_rate_limit or self._consecutive_errors >= 2:
+            multiplier = min(2 ** (self._consecutive_errors - 1), 4)
+            new_interval = min(self._base_interval * multiplier, self._max_interval)
+            if self.update_interval != new_interval:
+                self.update_interval = new_interval
+                _LOGGER.warning(
+                    "%s: Servidor con alta carga o límite de tasa (%s fallos consecutivos). "
+                    "Próximo sondeo en %s",
+                    self.name,
+                    self._consecutive_errors,
+                    new_interval,
+                )
+
+    def _reset_backoff(self) -> None:
+        """Restaura el intervalo habitual tras una consulta exitosa."""
+        if self._consecutive_errors > 0 or self.update_interval != self._base_interval:
+            self._consecutive_errors = 0
+            self.update_interval = self._base_interval
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         try:
-            return await self._fetch_from_sofse_api()
+            data = await self._fetch_from_sofse_api()
+            self._reset_backoff()
+            return data
         except (ClientError, TimeoutError, UpdateFailed, ValueError, KeyError) as sofse_err:
             _LOGGER.debug(
                 "API SOFSE v1 con autenticación falló (%s), intentando endpoint alternativo",
                 sofse_err,
             )
-            return await self._fetch_from_fallback_endpoint()
+            try:
+                data = await self._fetch_from_fallback_endpoint()
+                self._reset_backoff()
+                return data
+            except UpdateFailed as err:
+                is_429 = "429" in str(err)
+                self._apply_backoff(is_rate_limit=is_429)
+                raise
+            except (ClientError, TimeoutError) as net_err:
+                self._apply_backoff(is_rate_limit=False)
+                raise UpdateFailed(f"Fallo de conexión al consultar Trenes: {net_err}") from net_err
 
     async def _ensure_sofse_token(self, force_refresh: bool = False) -> str:
         """Obtiene o renueva el token JWT de SOFSE."""
@@ -263,11 +378,16 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
             return self._token
 
         creds = _generate_sofse_credentials()
+        headers = {**HEADERS_SOFSE, "Content-Type": "application/json"}
         async with self.session.post(
             f"{URL_SOFSE_API_BASE}/auth/authorize",
+            headers=headers,
             json=creds,
             timeout=REQUEST_TIMEOUT,
         ) as resp:
+            if resp.status == 429:
+                self._apply_backoff(is_rate_limit=True)
+                raise UpdateFailed("Error HTTP 429 (Too Many Requests) al autenticar con SOFSE")
             if resp.status != 200:
                 raise UpdateFailed(f"Error HTTP {resp.status} al autenticar con SOFSE")
             auth_data = await resp.json(content_type=None)
@@ -290,25 +410,34 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
     async def _sofse_get(self, path: str) -> Any:
         """Realiza un GET autenticado contra la API de SOFSE."""
         token = await self._ensure_sofse_token()
-        headers = {"Authorization": token, "Accept": "application/json"}
+        headers = {**HEADERS_SOFSE, "Authorization": token}
         async with self.session.get(
             f"{URL_SOFSE_API_BASE}{path}",
             headers=headers,
             timeout=REQUEST_TIMEOUT,
         ) as resp:
             if resp.status in (401, 403):
+                # Token expirado o rechazado: forzar renovación y reintentar una única vez
+                self._token = None
                 token = await self._ensure_sofse_token(force_refresh=True)
-                headers["Authorization"] = token
+                retry_headers = {**HEADERS_SOFSE, "Authorization": token}
                 async with self.session.get(
                     f"{URL_SOFSE_API_BASE}{path}",
-                    headers=headers,
+                    headers=retry_headers,
                     timeout=REQUEST_TIMEOUT,
                 ) as retry_resp:
+                    if retry_resp.status == 429:
+                        self._apply_backoff(is_rate_limit=True)
+                        raise UpdateFailed(f"Error HTTP 429 (Too Many Requests) en {path}")
                     if retry_resp.status != 200:
                         raise UpdateFailed(
-                            f"Error HTTP {retry_resp.status} al consultar {path}"
+                            f"Error HTTP {retry_resp.status} al reintentar {path}"
                         )
                     return await retry_resp.json(content_type=None)
+
+            if resp.status == 429:
+                self._apply_backoff(is_rate_limit=True)
+                raise UpdateFailed(f"Error HTTP 429 (Too Many Requests) al consultar {path}")
             if resp.status != 200:
                 raise UpdateFailed(f"Error HTTP {resp.status} al consultar {path}")
             return await resp.json(content_type=None)
@@ -429,29 +558,32 @@ class TrenesDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
 
     async def _fetch_from_fallback_endpoint(self) -> dict[str, dict[str, Any]]:
         """Obtiene datos desde el endpoint JSON directo (formato de especificación)."""
-        try:
-            async with self.session.get(URL_TRENES_STATUS, timeout=REQUEST_TIMEOUT) as resp:
-                if resp.status != 200:
-                    raise UpdateFailed(f"Error HTTP {resp.status} al consultar Trenes")
-                data = await resp.json(content_type=None)
+        async with self.session.get(
+            URL_TRENES_STATUS,
+            headers=HEADERS_SOFSE,
+            timeout=REQUEST_TIMEOUT,
+        ) as resp:
+            if resp.status == 429:
+                raise UpdateFailed("Error HTTP 429 (Too Many Requests) al consultar Trenes")
+            if resp.status != 200:
+                raise UpdateFailed(f"Error HTTP {resp.status} al consultar Trenes")
+            data = await resp.json(content_type=None)
 
-                normalized: dict[str, dict[str, Any]] = {}
-                for linea in data.get("lineas", []):
-                    nombre = linea.get("nombre", "").strip()
-                    classified = classify_service_status(
-                        linea.get("estado", "Desconocido"),
-                        linea.get("mensaje", ""),
-                    )
-                    normalized[nombre] = {
-                        "estado": classified["estado"],
-                        "categoria": classified["categoria"],
-                        "alerta_operativa": classified["alerta_operativa"],
-                        "mensaje": classified["mensaje"],
-                        "ramales": linea.get("ramales", []),
-                    }
-                return normalized
-        except (ClientError, TimeoutError) as err:
-            raise UpdateFailed(f"Fallo de conexión al consultar Trenes: {err}") from err
+            normalized: dict[str, dict[str, Any]] = {}
+            for linea in data.get("lineas", []):
+                nombre = linea.get("nombre", "").strip()
+                classified = classify_service_status(
+                    linea.get("estado", "Desconocido"),
+                    linea.get("mensaje", ""),
+                )
+                normalized[nombre] = {
+                    "estado": classified["estado"],
+                    "categoria": classified["categoria"],
+                    "alerta_operativa": classified["alerta_operativa"],
+                    "mensaje": classified["mensaje"],
+                    "ramales": linea.get("ramales", []),
+                }
+            return normalized
 
 
 class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -478,6 +610,31 @@ class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
         self.trenes_coord = trenes_coord
         self.gcba_client_id = (gcba_client_id or "").strip()
         self.gcba_client_secret = (gcba_client_secret or "").strip()
+        self._base_interval: timedelta = SCAN_INTERVAL_STATIONS
+        self._max_interval: timedelta = timedelta(minutes=5)
+        self._consecutive_errors: int = 0
+
+    def _apply_backoff(self, is_rate_limit: bool = False) -> None:
+        """Incrementa progresivamente el intervalo de sondeo ante errores o 429."""
+        self._consecutive_errors += 1
+        if is_rate_limit or self._consecutive_errors >= 2:
+            multiplier = min(2 ** (self._consecutive_errors - 1), 5)
+            new_interval = min(self._base_interval * multiplier, self._max_interval)
+            if self.update_interval != new_interval:
+                self.update_interval = new_interval
+                _LOGGER.warning(
+                    "%s: Servidor con alta carga o límite de tasa (%s fallos consecutivos). "
+                    "Próximo sondeo en %s",
+                    self.name,
+                    self._consecutive_errors,
+                    new_interval,
+                )
+
+    def _reset_backoff(self) -> None:
+        """Restaura el intervalo habitual tras una consulta exitosa."""
+        if self._consecutive_errors > 0 or self.update_interval != self._base_interval:
+            self._consecutive_errors = 0
+            self.update_interval = self._base_interval
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         results: dict[str, dict[str, Any]] = {}
@@ -499,6 +656,9 @@ class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
             elif st["network"] == "subte":
                 subte_stations.append(st)
 
+        had_rate_limit = False
+        any_success = False
+
         # 1. Consultar arribos de estaciones de Tren en paralelo
         if tren_stations:
             tasks = [
@@ -509,7 +669,10 @@ class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
             for st, outcome in zip(tren_stations, tren_outcomes):
                 if isinstance(outcome, dict):
                     results[st["key"]] = outcome
+                    any_success = True
                 else:
+                    if "429" in str(outcome):
+                        had_rate_limit = True
                     _LOGGER.debug(
                         "Error al consultar arribos de estación %s: %s",
                         st["name"],
@@ -535,6 +698,12 @@ class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
             results[st["key"]] = self._build_subte_station_status(
                 st, home_lat, home_lon, gcba_forecast
             )
+            any_success = True
+
+        if had_rate_limit:
+            self._apply_backoff(is_rate_limit=True)
+        elif any_success:
+            self._reset_backoff()
 
         return results
 
@@ -560,7 +729,13 @@ class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
         closed = is_station_affected_by_message(station["name"], line_msg)
 
         url = f"{URL_SOFSE_ARRIBOS}/{station['id']}"
-        async with self.session.get(url, timeout=REQUEST_TIMEOUT) as resp:
+        async with self.session.get(
+            url,
+            headers=HEADERS_SOFSE,
+            timeout=REQUEST_TIMEOUT,
+        ) as resp:
+            if resp.status == 429:
+                raise UpdateFailed(f"HTTP 429 (Too Many Requests) en arribos de estación {station['id']}")
             if resp.status != 200:
                 raise UpdateFailed(
                     f"HTTP {resp.status} en arribos de estación {station['id']}"
@@ -658,9 +833,13 @@ class StationsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
         try:
             async with self.session.get(
                 URL_GCBA_SUBTE_FORECAST,
+                headers=HEADERS_GCBA,
                 params=params,
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
+                if resp.status == 429:
+                    self._apply_backoff(is_rate_limit=True)
+                    return None
                 if resp.status != 200:
                     _LOGGER.debug(
                         "API GCBA Subte devolvió HTTP %s", resp.status
