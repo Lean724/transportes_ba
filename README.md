@@ -91,3 +91,20 @@ Integración personalizada (`custom_component`) para **Home Assistant** que moni
 | :--- | :--- | :--- |
 | `binary_sensor.subte_linea_b_alerta` | `problem` | `on` solo ante problema operativo real (`demoras`, `servicio_limitado`, `interrumpido`); `off` en servicio normal o avisos informativos |
 | `binary_sensor.tren_sarmiento_alerta` | `problem` | `on` solo ante problema operativo real; `off` en servicio normal o avisos informativos |
+
+---
+
+## 💡 Atribuciones y Créditos
+
+Este proyecto fue posible gracias a la investigación y desarrollos de código abierto de la comunidad de desarrolladores de Argentina, en especial por el análisis e ingeniería inversa del protocolo de autenticación y endpoints de la API de Trenes Argentinos (SOFSE):
+
+- **[ariedro/api-trenes](https://github.com/ariedro/api-trenes)** de [@ariedro](https://github.com/ariedro): Implementación de referencia del algoritmo dinámico de autenticación y wrapper para la API de Trenes Argentinos.
+- **[nicodiaz101/MoovAR](https://github.com/nicodiaz101/MoovAR)** de [@nicodiaz101](https://github.com/nicodiaz101): Aplicación abierta de movilidad urbana y análisis de endpoints de SOFSE.
+- **[maltenzo/che-el-tren](https://github.com/maltenzo/che-el-tren)** de [@maltenzo](https://github.com/maltenzo): Bot y herramientas de consulta de horarios y servicios ferroviarios en tiempo real.
+- **[0kweather/trainsheet](https://github.com/0kweather/trainsheet)** de [@0kweather](https://github.com/0kweather): Consulta y análisis de cronogramas y arribos de trenes metropolitanos.
+
+### Fuentes de Datos Públicos
+- **[Emova Movilidad S.A.](https://emova.com.ar/)**: Estado en tiempo real de la red de Subte y Premetro.
+- **[Trenes Argentinos (SOFSE)](https://www.argentina.gob.ar/transporte/trenes-argentinos)**: Estado operativo y arribos en tiempo real de las líneas metropolitanas del AMBA.
+- **[Buenos Aires Data (GCBA)](https://data.buenosaires.gob.ar/)**: Catálogo georreferenciado de estaciones y API de Transporte GTFS-RT de la Ciudad de Buenos Aires.
+
