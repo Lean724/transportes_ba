@@ -4,7 +4,7 @@
 [![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/Lean724/transportes_ba)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Integración personalizada (`custom_component`) para **Home Assistant** que monitorea en tiempo real el estado detallado de la red de **Subte y Premetro (Emova)**, **Trenes Metropolitanos del AMBA (Trenes Argentinos / SOFSE)** y las **próximas salidas desde las estaciones cercanas a tu casa**, completamente en español argentino.
+Integración de **Home Assistant para el transporte público de Buenos Aires**. Monitorea en tiempo real el estado del **Subte y Premetro**, los **trenes metropolitanos del AMBA** y las próximas salidas desde estaciones cercanas. Incluye alertas de servicio, demoras, interrupciones y arribos por estación.
 
 <p align="center">
   <img src="custom_components/transportes_ba/brand/logo.png" width="160" height="160" alt="TBA Logo">
